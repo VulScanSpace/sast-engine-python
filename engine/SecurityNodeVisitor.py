@@ -60,8 +60,12 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_Expression(node)
 
     def visit_FunctionDef(self, node: FunctionDef) -> Any:
-        self.s_module.funcs[''] = node
         func_name = node.name
+        func_args = self.visit_wrapper(node.args)
+        func_body = [self.visit_wrapper(item) for item in node.body]
+        func_decorator_list = [self.visit_wrapper(item) for item in node.decorator_list]
+        func_returns = self.visit_wrapper(node.returns) if node.returns else None
+        func_type_comment = self.visit_wrapper(node.type_comment) if node.type_comment else None
         self.s_module.funcs[func_name] = node
 
     def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> Any:
@@ -71,16 +75,17 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_ClassDef(node)
 
     def visit_Return(self, node: Return) -> Any:
-        return super().visit_Return(node)
+        value = self.visit_wrapper(node.value)
+        return f'return {value}'
 
     def visit_Delete(self, node: Delete) -> Any:
         return super().visit_Delete(node)
 
     def visit_field(self, field, value):
         s_field = SField()
-        s_field.name = field.id
+        s_field.name = self.visit_wrapper(field)
         s_field_value = self.visit_wrapper(value)
-        s_field.expr = f'{field.id} = {s_field_value}'
+        s_field.expr = f'{s_field.name} = {s_field_value}'
         s_field.value_pattern[s_field.expr] = model.s_field.SValuePattern()
         s_field.value_pattern[s_field.expr].value = s_field_value
         s_field.value_pattern[s_field.expr].type = value.__class__.__name__
@@ -112,7 +117,7 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
             else:
                 s_field = self.visit_field(_fields, _field_values)
                 s_fields.append(s_field)
-        return s_fields
+        return s_fields if len(s_fields) > 1 else s_fields[0]
 
     def visit_AugAssign(self, node: AugAssign) -> Any:
         return super().visit_AugAssign(node)
@@ -121,7 +126,22 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_AnnAssign(node)
 
     def visit_For(self, node: For) -> Any:
-        return super().visit_For(node)
+        # target
+        loop_var = self.visit_wrapper(node.target)
+        # iter
+        loop_iter = self.visit_wrapper(node.iter)
+        expr = f'for {loop_var} in {loop_iter}:'
+        # body
+        loop_body = [self.visit_wrapper(item) for item in node.body]
+        for body in loop_body:
+            expr = f'{expr}\n\t{body}'
+        # orelse
+        loop_else = [self.visit_wrapper(item) for item in node.orelse]
+        expr = expr if len(loop_else) == 0 else f'{expr}\nelse:'
+        for body in loop_else:
+            expr = f'{expr}\n\t{body}'
+        print(expr)
+        return expr
 
     def visit_AsyncFor(self, node: AsyncFor) -> Any:
         return super().visit_AsyncFor(node)
@@ -130,20 +150,86 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_While(node)
 
     def visit_If(self, node: If) -> Any:
-        pass
-        # return super().visit_If(node)
+        test = node.test
+        body = node.body
+        orelse = node.orelse
+        test_expr = self.visit_wrapper(test)
+        expr = f'if {test_expr}:'
+        for item in body:
+            body_expr = self.visit_wrapper(item)
+            if isinstance(body_expr, SField):
+                expr = f'{expr}\n\t{body_expr.expr}'
+            else:
+                expr = f'{expr}\n\t{body_expr}'
+        if orelse:
+            else_values = [self.visit_wrapper(item) for item in orelse]
+            orelse_exprs = ''
+            for else_value in else_values:
+                if isinstance(else_value, SField):
+                    orelse_exprs = f'{orelse_exprs}\n\t{else_value.expr}'
+                else:
+                    orelse_exprs = f'{orelse_exprs}\n\t{else_value}'
+            expr = f'{expr}\nelse:{orelse_exprs}'
+        print(expr)
+        return expr
 
     def visit_With(self, node: With) -> Any:
-        return super().visit_With(node)
+        """
+        一个 with 代码块。 items 是一个代表上下文管理器的 withitem 节点列表，而 body 是该上下文中的缩进代码块。
+
+        :param node:
+        :return:
+        """
+        with_item_expr = [self.visit_wrapper(item) for item in node.items]
+        body_expr = [self.visit_wrapper(item) for item in node.body]
+        expr = 'with'
+        for item in with_item_expr:
+            expr = f'{expr} {item},'
+        expr = expr[:-1]
+        expr = f'{expr}:'
+        for item in body_expr:
+            if isinstance(item, SField):
+                expr = f'{expr}\n\t{item.expr}'
+            else:
+                expr = f'{expr}\n\t{item}'
+        print(expr)
+        return expr
 
     def visit_AsyncWith(self, node: AsyncWith) -> Any:
         return super().visit_AsyncWith(node)
 
     def visit_Raise(self, node: Raise) -> Any:
-        return super().visit_Raise(node)
+        cause_expr = self.visit_wrapper(node.cause) if node.cause else None
+        exc_expr = self.visit_wrapper(node.exc)
+        if cause_expr is not None:
+            pass
+        return f'raise {exc_expr}'
 
     def visit_Try(self, node: Try) -> Any:
-        return super().visit_Try(node)
+        """
+        try 代码块。 所有属性都是要执行的节点列表，除了 handlers，它是一个 ExceptHandler 节点列表。
+
+        :param node:
+        :return:
+        """
+        body_expr = [self.visit_wrapper(item) for item in node.body]
+        handler_expr = [self.visit_wrapper(item) for item in node.handlers]
+        orelse_expr = [self.visit_wrapper(item) for item in node.orelse]
+        finalbody_expr = [self.visit_wrapper(item) for item in node.finalbody]
+        expr = 'try:'
+        for item in body_expr:
+            if isinstance(item, SField):
+                expr = f'{expr}\n\t{item.expr}'
+            else:
+                expr = f'{expr}\n\t{item}'
+        for item in handler_expr:
+            expr = f'{expr}\n{item}'
+        for item in orelse_expr:
+            expr = f'{expr}\n{item}'
+        for item in finalbody_expr:
+            expr = f'{expr}\n{item}'
+        print(expr)
+        return expr
 
     def visit_Assert(self, node: Assert) -> Any:
         return super().visit_Assert(node)
@@ -226,28 +312,75 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_Slice(node)
 
     def visit_BoolOp(self, node: BoolOp) -> Any:
-        return super().visit_BoolOp(node)
+        op_expr = self.visit_wrapper(node.op)
+        value_exprs = [self.visit_wrapper(item) for item in node.values]
+        expr = ''
+        for value_expr in value_exprs:
+            if isinstance(value_expr, list):
+                expr = f'{expr} or {str(value_expr)}'
+            else:
+                expr = f'{expr} or {value_expr}'
+        return expr[2:]
 
     def visit_BinOp(self, node: BinOp) -> Any:
-        return super().visit_BinOp(node)
+        """
+        双目运算（如相加或相减）。 op 是运算符，而 left 和 right 是任意表达式节点。
+
+        :param node:
+        :return:
+        """
+        left_expr = self.visit_wrapper(node.left)
+        op_expr = self.visit_wrapper(node.op)
+        right_expr = self.visit_wrapper(node.right)
+        expr = f'{left_expr} {op_expr} {right_expr}'
+        print(expr)
+        return expr
 
     def visit_UnaryOp(self, node: UnaryOp) -> Any:
-        return super().visit_UnaryOp(node)
+        op = self.visit_wrapper(node.op)
+        operand = self.visit_wrapper(node.operand)
+        return f'{op} {operand}'
 
     def visit_Lambda(self, node: Lambda) -> Any:
-        return super().visit_Lambda(node)
+        arg_expr = self.visit_wrapper(node.args)
+        body_expr = self.visit_wrapper(node.body)
+        expr = f'lambda {arg_expr}: {body_expr}'
+        return expr
 
     def visit_IfExp(self, node: IfExp) -> Any:
-        return super().visit_IfExp(node)
+        """
+        一个表达式例如 a if b else c。 每个字段保存一个单独节点，因而在下面的示例中，三个节点均为 Name 节点。
+
+        print(ast.dump(ast.parse('a if b else c', mode='eval'), indent=4))
+        Expression(
+            body=IfExp(
+                test=Name(id='b', ctx=Load()),
+                body=Name(id='a', ctx=Load()),
+                orelse=Name(id='c', ctx=Load())
+            )
+        )
+
+        :param node:
+        :return:
+        """
+        body_expr = self.visit_wrapper(node.body)
+        test_expr = self.visit_wrapper(node.test)
+        else_expr = self.visit_wrapper(node.orelse)
+        return f'{body_expr} if {test_expr} else {else_expr}'
 
     def visit_Dict(self, node: Dict) -> Any:
-        return super().visit_Dict(node)
+        dict_expr = dict()
+        for key, value in zip(node.keys, node.values):
+            dict_expr[self.visit_wrapper(key)] = self.visit_wrapper(value)
+        return dict_expr if dict_expr else '{}'
 
     def visit_Set(self, node: Set) -> Any:
         return super().visit_Set(node)
 
     def visit_ListComp(self, node: ListComp) -> Any:
-        return super().visit_ListComp(node)
+        body_expr = self.visit_wrapper(node.elt)
+        generator_expr = [self.visit_wrapper(item) for item in node.generators]
+        return f'[{body_expr} {" ".join(generator_expr)}]'
 
     def visit_SetComp(self, node: SetComp) -> Any:
         return super().visit_SetComp(node)
@@ -268,7 +401,15 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_YieldFrom(node)
 
     def visit_Compare(self, node: Compare) -> Any:
-        return super().visit_Compare(node)
+        left = node.left
+        ops = node.ops
+        comparators = node.comparators
+        left_expr = self.visit_wrapper(left)
+        op_exprs = [self.visit_wrapper(op) for op in ops]
+        comparators = [self.visit_wrapper(comparator) for comparator in comparators]
+        full_expr = f'{left_expr} {" ".join(op_exprs)} {" ".join(comparators)}'
+        self.s_module.expr[full_expr] = node
+        return full_expr
 
     def visit_Call(self, node: Call) -> Any:
         expr = ""
@@ -277,43 +418,85 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         if isinstance(func, ast.Name):
             func_name = func.id
         elif isinstance(func, ast.Attribute):
-            func_name = f'{func.value.id}.{func.attr}'
+            func_name = f'{self.visit_wrapper(func.value)}.{func.attr}'
         else:
             pass
 
-        self.s_module.func_access[func_name] = node
-        expr = f'{func_name}({"args"})'
+        func_args = [self.visit_wrapper(item) for item in node.args]
+        func_keywords = [self.visit_wrapper(item) for item in node.keywords]
+
+        expr = f'{func_name}('
+        func_args.extend(func_keywords)
+        if len(func_args) > 0:
+            expr = f'{expr}{", ".join(func_args)}'
+        expr = f'{expr})'
+        key = f'{expr}:{node.lineno}:{node.col_offset}:{node.end_lineno}:{node.end_col_offset}'
+        self.s_module.func_access[key] = node
         return expr
 
     def visit_FormattedValue(self, node: FormattedValue) -> Any:
-        return super().visit_FormattedValue(node)
+        """
+        节点是以一个 f-字符串形式的格式化字段来代表的。 如果该字符串只包含单个格式化字段而没有任何其他内容则节点可以被隔离，否则它将在 JoinedStr 中出现。
+
+        简言之：format 字符串中的变量/表达式
+        :param node:
+        :return:
+        """
+        value_expr = self.visit_wrapper(node.value)
+        conversion_expr = node.conversion
+        format_spec_expr = self.visit_wrapper(node.format_spec) if node.format_spec else None
+        if format_spec_expr is not None or conversion_expr > 0:
+            print("")
+        return value_expr
 
     def visit_JoinedStr(self, node: JoinedStr) -> Any:
-        return super().visit_JoinedStr(node)
+        """
+        一个 f-字符串，由一系列 FormattedValue 和 Constant 节点组成。
+        如： f"{a[0]}\t{a[1].name}" for a in extension_mgr.plugins_by_id.items()
+        :param node:
+        :return:
+        """
+        value_exprs = [self.visit_wrapper(item) for item in node.values]
+        expr = ''.join(value_exprs)
+        return f'f{expr}'
 
     def visit_Constant(self, node: Constant) -> Any:
-        return node.value
+        if isinstance(node.value, str):
+            return f'"{node.value}"'
+        else:
+            return f'{node.value}'
 
     def visit_NamedExpr(self, node: NamedExpr) -> Any:
         return super().visit_NamedExpr(node)
 
     def visit_Attribute(self, node: Attribute) -> Any:
-        return super().visit_Attribute(node)
+        attr = node.attr
+        value = self.visit_wrapper(node.value) if node.value else None
+        return f'{value}.{attr}' if value else attr
 
     def visit_Subscript(self, node: Subscript) -> Any:
-        return super().visit_Subscript(node)
+        """
+        array[0]
+        :param node:
+        :return:
+        """
+        value_expr = self.visit_wrapper(node.value)
+        slice_expr = self.visit_wrapper(node.slice)
+        return f'{value_expr}[{slice_expr}]'
 
     def visit_Starred(self, node: Starred) -> Any:
         return super().visit_Starred(node)
 
     def visit_Name(self, node: Name) -> Any:
-        return super().visit_Name(node)
+        return node.id
 
     def visit_List(self, node: List) -> Any:
-        return super().visit_List(node)
+        list_values = [self.visit_wrapper(item) for item in node.elts]
+        return list_values if list_values else []
 
     def visit_Tuple(self, node: Tuple) -> Any:
-        return super().visit_Tuple(node)
+        var_names = [self.visit_wrapper(item) for item in node.elts]
+        return f'{", ".join(var_names)}'
 
     def visit_Del(self, node: Del) -> Any:
         return super().visit_Del(node)
@@ -325,13 +508,13 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_Store(node)
 
     def visit_And(self, node: And) -> Any:
-        return super().visit_And(node)
+        return 'and'
 
     def visit_Or(self, node: Or) -> Any:
-        return super().visit_Or(node)
+        return 'or'
 
     def visit_Add(self, node: Add) -> Any:
-        return super().visit_Add(node)
+        return '+'
 
     def visit_BitAnd(self, node: BitAnd) -> Any:
         return super().visit_BitAnd(node)
@@ -367,13 +550,13 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_RShift(node)
 
     def visit_Sub(self, node: Sub) -> Any:
-        return super().visit_Sub(node)
+        return '-'
 
     def visit_Invert(self, node: Invert) -> Any:
         return super().visit_Invert(node)
 
     def visit_Not(self, node: Not) -> Any:
-        return super().visit_Not(node)
+        return 'not'
 
     def visit_UAdd(self, node: UAdd) -> Any:
         return super().visit_UAdd(node)
@@ -382,22 +565,22 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_USub(node)
 
     def visit_Eq(self, node: Eq) -> Any:
-        return super().visit_Eq(node)
+        return '=='
 
     def visit_Gt(self, node: Gt) -> Any:
-        return super().visit_Gt(node)
+        return '>'
 
     def visit_GtE(self, node: GtE) -> Any:
         return super().visit_GtE(node)
 
     def visit_In(self, node: In) -> Any:
-        return super().visit_In(node)
+        return 'in'
 
     def visit_Is(self, node: Is) -> Any:
-        return super().visit_Is(node)
+        return 'is'
 
     def visit_IsNot(self, node: IsNot) -> Any:
-        return super().visit_IsNot(node)
+        return 'is not'
 
     def visit_Lt(self, node: Lt) -> Any:
         return super().visit_Lt(node)
@@ -406,31 +589,82 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_LtE(node)
 
     def visit_NotEq(self, node: NotEq) -> Any:
-        return super().visit_NotEq(node)
+        return '!='
 
     def visit_NotIn(self, node: NotIn) -> Any:
-        return super().visit_NotIn(node)
+        return 'not in'
 
     def visit_comprehension(self, node: comprehension) -> Any:
-        return super().visit_comprehension(node)
+        target_expr = self.visit_wrapper(node.target)
+        iter_expr = self.visit_wrapper(node.iter)
+        if_expr = [self.visit_wrapper(item) for item in node.ifs]
+        is_async = node.is_async
+        if len(if_expr) > 0:
+            print(if_expr)
+        return f'async for {target_expr} in {iter_expr}' if is_async else f'for {target_expr} in {iter_expr}'
 
     def visit_ExceptHandler(self, node: ExceptHandler) -> Any:
-        return super().visit_ExceptHandler(node)
+        """
+        一个单独的 except 子句。 type 是它将匹配的异常，通常为一个 Name 节点（或 None 表示捕获全部的 except: 子句）。 name 是一个用于存放异常的别名的原始字符串，或者如果子句没有 as foo 则为 None。 body 为一个节点列表。
+
+        :param node:
+        :return:
+        """
+        err_type = self.visit_wrapper(node.type)
+        name_expr = node.name
+        body_expr = '\n\t'.join(self.visit_wrapper(item) for item in node.body)
+        expr = f'except {err_type}'
+        if name_expr is not None:
+            expr = f'{expr} as {name_expr}'
+
+        expr = f'{expr}:\n\t{body_expr}'
+        print(expr)
+        return expr
 
     def visit_arguments(self, node: arguments) -> Any:
-        return super().visit_arguments(node)
+        arguments = list()
+        if isinstance(node.args, list) and isinstance(node.defaults, list):
+            if len(node.defaults) > 0 and len(node.args) == len(node.defaults):
+                for arg_name, default_value in zip(node.args, node.defaults):
+                    arguments.append(f'{self.visit_wrapper(arg_name)}={self.visit_wrapper(default_value)}')
+            else:
+                for arg in node.args:
+                    arguments.append(f'{self.visit_wrapper(arg)}')
+        else:
+            pass
+        return ', '.join(arguments)
 
     def visit_arg(self, node: arg) -> Any:
-        return super().visit_arg(node)
+        arg = node.arg
+        annotation = node.annotation
+        type_comment = node.type_comment
+        expr = ''
+        if annotation:
+            expr = f'{annotation}'
+        expr = f'{expr} {arg}' if expr else arg
+        expr = f'{expr}:{type_comment}' if type_comment else expr
+        return expr
 
     def visit_keyword(self, node: keyword) -> Any:
-        return super().visit_keyword(node)
+        """
+        传给函数调用或类定义的关键字参数。 arg 是形参名称对应的原始字符串，value 是要传入的节点。
+
+        :param node:
+        :return:
+        """
+        arg_expr = node.arg
+        value_expr = self.visit_wrapper(node.value)
+        expr = f'{arg_expr}={value_expr}'
+        print(expr)
+        return expr
 
     def visit_alias(self, node: alias) -> Any:
         return super().visit_alias(node)
 
     def visit_withitem(self, node: withitem) -> Any:
-        return super().visit_withitem(node)
+        context_expr = self.visit_wrapper(node.context_expr)
+        vars_expr = self.visit_wrapper(node.optional_vars)
+        return f'{context_expr} as {vars_expr}'
 
     def visit_ExtSlice(self, node: ExtSlice) -> Any:
         return super().visit_ExtSlice(node)
@@ -471,7 +705,8 @@ class SecurityNodeVisitor:
         s_module = ast.parse(source_code)
         nv = SecurityNodeVisitor2()
         nv.visit(s_module)
-        print(nv.s_module)
+        print(f'func access: {len(nv.s_module.func_access)}')
+        print(ast.dump(s_module, indent=4))
         return "None"
 
     def _visit_import(self, node):

@@ -5,3 +5,4 @@ class SModule(object):
         self.funcs = dict()
         self.fields = dict()
         self.func_access = dict()
+        self.expr = dict()
