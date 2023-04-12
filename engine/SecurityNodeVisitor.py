@@ -12,7 +12,10 @@ from typing import Any
 
 import model
 from model.Module import SModule
+from model.func_access import FuncAccess
+from model.literal_access import LiteralAccess
 from model.s_field import SField
+from model.var_access import VarAccess
 
 
 class SecurityNodeVisitor2(ast.NodeVisitor):
@@ -300,7 +303,7 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return self.visit_wrapper(node.value)
 
     def visit_Pass(self, node: Pass) -> Any:
-        return super().visit_Pass(node)
+        return 'pass'
 
     def visit_Break(self, node: Break) -> Any:
         return super().visit_Break(node)
@@ -412,13 +415,21 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return full_expr
 
     def visit_Call(self, node: Call) -> Any:
+        func_access = FuncAccess(node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        func_access.set_node(node)
+
         expr = ""
         func = node.func
         func_name = ""
-        if isinstance(func, ast.Name):
-            func_name = func.id
-        elif isinstance(func, ast.Attribute):
-            func_name = f'{self.visit_wrapper(func.value)}.{func.attr}'
+
+        func_access.var_access = self.visit_wrapper(func)
+        func_name = func_access.var_access.get_expr()
+        if isinstance(func, ast.Attribute):
+            # TODO func.value 可能是复杂接口，需要拆分至独立的 var
+            func_access.label = func.attr
+            func_access.var_access.set_expr(func_access.var_access.get_var())
+            func_access.var_access.set_label("")
+            func_name = f'{func_access.var_access.get_expr()}.{func.attr}'
         else:
             pass
 
@@ -427,11 +438,19 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
 
         expr = f'{func_name}('
         func_args.extend(func_keywords)
+
+        for _arg in func_args:
+            func_access.args.append(_arg)
+            expr = f'{expr}{_arg.get_expr() if isinstance(_arg, VarAccess) else _arg}, '
+
         if len(func_args) > 0:
-            expr = f'{expr}{", ".join(func_args)}'
+            expr = expr[:-2]
+
         expr = f'{expr})'
         key = f'{expr}:{node.lineno}:{node.col_offset}:{node.end_lineno}:{node.end_col_offset}'
-        self.s_module.func_access[key] = node
+
+        func_access.set_expr(expr)
+        self.s_module.func_access[key] = func_access
         return expr
 
     def visit_FormattedValue(self, node: FormattedValue) -> Any:
@@ -461,18 +480,39 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return f'f{expr}'
 
     def visit_Constant(self, node: Constant) -> Any:
+        literal = LiteralAccess(node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        literal.set_value(node.value)
+        literal.set_expr(type(node.value))
         if isinstance(node.value, str):
-            return f'"{node.value}"'
+            literal.set_expr(f'"{node.value}"')
         else:
-            return f'{node.value}'
+            literal.set_expr(node.value)
+        return literal
 
     def visit_NamedExpr(self, node: NamedExpr) -> Any:
         return super().visit_NamedExpr(node)
 
     def visit_Attribute(self, node: Attribute) -> Any:
+        if isinstance(node.value, ast.Name):
+            var_access = self.visit_wrapper(node.value)
+            var_access.set_label(node.attr)
+            var_access.set_expr(f'{var_access.get_expr()}.{node.attr}')
+        elif isinstance(node.value, ast.Attribute):
+            var_access = self.visit_Attribute(node.value)
+            var_access.set_label(f'{var_access.get_label()}.{node.attr}')
+            var_access.set_expr(f'{var_access.get_var()}.{var_access.get_label()}')
+            print()
+        elif isinstance(node.value, ast.Subscript):
+            var_access = self.visit_Subscript(node.value)
+            var_access.set_label(f'{var_access.get_label()}.{node.attr}')
+            var_access.set_expr(f'{var_access.get_var()}{var_access.get_label()}')
+            print()
+        else:
+            print()
+
         attr = node.attr
         value = self.visit_wrapper(node.value) if node.value else None
-        return f'{value}.{attr}' if value else attr
+        return var_access
 
     def visit_Subscript(self, node: Subscript) -> Any:
         """
@@ -480,15 +520,23 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         :param node:
         :return:
         """
-        value_expr = self.visit_wrapper(node.value)
-        slice_expr = self.visit_wrapper(node.slice)
-        return f'{value_expr}[{slice_expr}]'
+        if isinstance(node.value, ast.Name):
+            var_access = self.visit_Name(node.value)
+            var_access.set_label(self.visit_wrapper(node.slice))
+            var_access.set_expr(f'{var_access.get_var()}[{var_access.get_label()}]')
+        else:
+            value_expr = self.visit_wrapper(node.value)
+            slice_expr = self.visit_wrapper(node.slice)
+        return var_access
 
     def visit_Starred(self, node: Starred) -> Any:
         return super().visit_Starred(node)
 
     def visit_Name(self, node: Name) -> Any:
-        return node.id
+        var_access = VarAccess(node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        var_access.set_var(node.id)
+        var_access.set_expr(node.id)
+        return var_access
 
     def visit_List(self, node: List) -> Any:
         list_values = [self.visit_wrapper(item) for item in node.elts]
@@ -526,7 +574,7 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_BitXor(node)
 
     def visit_Div(self, node: Div) -> Any:
-        return super().visit_Div(node)
+        return '/'
 
     def visit_FloorDiv(self, node: FloorDiv) -> Any:
         return super().visit_FloorDiv(node)
@@ -538,7 +586,12 @@ class SecurityNodeVisitor2(ast.NodeVisitor):
         return super().visit_Mod(node)
 
     def visit_Mult(self, node: Mult) -> Any:
-        return super().visit_Mult(node)
+        """
+
+        :param node:
+        :return:
+        """
+        return '*'
 
     def visit_MatMult(self, node: MatMult) -> Any:
         return super().visit_MatMult(node)
@@ -745,6 +798,8 @@ class SecurityNodeVisitor:
 
 if __name__ == "__main__":
     filename = '/Users/owefsad/PycharmProjects/bandit/bandit/cli/main.py'
+    filename = '/Users/owefsad/PycharmProjects/tk-example/main.py'
+    filename = '/Users/owefsad/PycharmProjects/bandit/bandit/core/blacklisting.py'
     s = SecurityNodeVisitor()
     with open(filename) as f:
         fdata = f.read()
