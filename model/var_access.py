@@ -1,4 +1,5 @@
 from model import AstModel
+from model.literal_access import LiteralAccess
 
 
 class VarAccess(AstModel):
@@ -6,8 +7,8 @@ class VarAccess(AstModel):
     var = str()
     label = str()
 
-    def __init__(self, start_line=-1, end_line=-1, start_col=-1, end_col=-1):
-        super().__init__(start_line, end_line, start_col, end_col)
+    def __init__(self, ast_node):
+        super().__init__(ast_node)
 
     def set_var(self, var):
         self.var = var
@@ -17,6 +18,9 @@ class VarAccess(AstModel):
 
     def set_label(self, label):
         self.label = label
+
+    def add_label(self, label):
+        print()
 
     def get_label(self):
         return self.label

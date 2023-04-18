@@ -1,19 +1,26 @@
 import ast
 
 from model import AstModel
-from model.func import FuncDef
+from model.func import SFuncDef
 
 
 class FuncAccess(AstModel):
-    expr = str()
-    var_access = str()
-    label = str()
-    args = list()
-    parent = FuncDef()
+    expr = None
+    var_access = None
+    name = None
+    object_class = None
+    label = None
+    args = None
+    parent = None
     node = None
 
-    def __init__(self, start_line=-1, end_line=-1, start_col=-1, end_col=-1):
-        super().__init__(start_line, end_line, start_col, end_col)
+    def __init__(self, ast_node):
+        super().__init__(ast_node)
+        self.args = list()
+        self.label = str()
+        self.name = str()
+        self.expr = str()
+        # self.parent = SFuncDef()
 
     def set_node(self, node: ast.Call):
         self.node = node

@@ -1,15 +1,23 @@
+import ast
+
 from model import AstModel
 
 
-class FuncDef(AstModel):
+class SFuncDef(AstModel):
     name = str()
     annotations = list()
     args = list()
     rets = list()
     body_array = list()
 
-    def __init__(self, start_line=-1, end_line=-1, start_col=-1, end_col=-1):
-        super().__init__(start_line, end_line, start_col, end_col)
+    def __init__(self, ast_node):
+        super().__init__(ast_node)
+
+    def set_name(self, name: str):
+        self.name = name
+
+    def get_name(self):
+        return self.name
 
     def add_annotation(self, annotation):
         self.annotations.append(annotation)

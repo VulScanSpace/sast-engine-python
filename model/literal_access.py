@@ -6,8 +6,8 @@ class LiteralAccess(AstModel):
     l_value = None
     l_type = None
 
-    def __init__(self, start_line, end_line, start_col, end_col):
-        super().__init__(start_line, end_line, start_col, end_col)
+    def __init__(self, ast_node):
+        super().__init__(ast_node)
 
     def set_expr(self, expr):
         self.expr = expr
