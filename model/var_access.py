@@ -1,3 +1,5 @@
+import ast
+
 from model import AstModel
 from model.literal_access import LiteralAccess
 
@@ -9,6 +11,12 @@ class VarAccess(AstModel):
 
     def __init__(self, ast_node):
         super().__init__(ast_node)
+
+    def __str__(self) -> str:
+        if isinstance(self.ast_node, ast.Subscript):
+            return f'{self.var}[{self.label}]'
+        else:
+            return f'{self.var}.{self.label}' if self.label else self.var
 
     def set_var(self, var):
         self.var = var

@@ -16,6 +16,7 @@ from model.func import SFuncDef
 from model.func_access import FuncAccess
 from model.literal_access import LiteralAccess
 from model.s_field import SField
+from model.var import VarDef
 from model.var_access import VarAccess
 
 
@@ -118,17 +119,28 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return f'return {value}'
 
     def visit_Delete(self, node: Delete) -> Any:
-        return super().visit_Delete(node)
+        _targets = [str(self.visit_wrapper(_)) for _ in node.targets]
+        _expr = f'delete {", ".join(_targets)}'
+        print(_expr)
+        return _expr
 
     def visit_field(self, field, value):
         s_field = SField()
         s_field.name = self.visit_wrapper(field)
-        s_field_value = self.visit_wrapper(value)
-        s_field.expr = f'{s_field.name} = {s_field_value}'
-        s_field.value_pattern[s_field.expr] = model.s_field.SValuePattern()
-        s_field.value_pattern[s_field.expr].value = s_field_value
-        s_field.value_pattern[s_field.expr].type = value.__class__.__name__
-        return s_field
+        if isinstance(value, list):
+            s_field_value = [self.visit_wrapper(item) for item in value]
+            s_field.expr = f'{s_field.name} = {s_field_value}'
+            s_field.value_pattern[s_field.expr] = model.s_field.SValuePattern()
+            s_field.value_pattern[s_field.expr].value = s_field_value
+            s_field.value_pattern[s_field.expr].type = value.__class__.__name__
+            return s_field
+        else:
+            s_field_value = self.visit_wrapper(value)
+            s_field.expr = f'{s_field.name.expr} = {s_field_value}'
+            s_field.value_pattern[s_field.expr] = model.s_field.SValuePattern()
+            s_field.value_pattern[s_field.expr].value = s_field_value
+            s_field.value_pattern[s_field.expr].type = value.__class__.__name__
+            return s_field
 
     def visit_Assign(self, node: Assign) -> Any:
         """
@@ -140,27 +152,67 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         targets = node.targets
         values = node.value
         type_comment = node.type_comment
-        for field in targets:
-            _field_ctx = field.ctx
-            _field_value_ctx = values.ctx if hasattr(values, 'ctx') else None
-            _fields = field.elts if isinstance(field, ast.Tuple) else field
-            _field_values = values.elts if isinstance(values, ast.Tuple) else values
 
-            if isinstance(_fields, list):
-                if isinstance(_field_values, list) and len(_fields) == len(_field_values):
-                    for _field, _field_value in zip(_fields, _field_values):
+        if len(targets) > 1:
+            print()
+        else:
+            _var = targets[0]
+            if isinstance(_var, ast.Tuple):
+                if isinstance(values, (ast.Tuple, ast.List)):
+                    for _field, _field_value in zip(_var.elts, values.elts):
                         s_field = self.visit_field(_field, _field_value)
                         s_fields.append(s_field)
                 else:
-                    for _field in _fields:
-                        s_fields.append(self.visit_field(_field, _field_values))
+
+                    _var_names = self.visit_Tuple(_var)
+                    _var_value = self.visit_wrapper(values)
+                    index = 0
+                    for _var in _var_names:
+                        var_def = VarDef(node)
+                        var_def.set_name(_var)
+                        var_def.set_value(_var_value)
+                        var_def.set_expr(f'{_var.expr} = {_var_value.expr}[{index}]')
+                        index += 1
+                        s_fields.append(var_def)
             else:
-                s_field = self.visit_field(_fields, _field_values)
-                s_fields.append(s_field)
+                var_def = VarDef(node)
+                _var_def = self.visit_wrapper(_var)
+                var_def.set_name(_var_def)
+                if isinstance(values, ast.Tuple):
+                    _var_values = self.visit_Tuple(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = ({", ".join([str(_) for _ in _var_values])})')
+                elif isinstance(values, ast.List):
+                    _var_values = self.visit_List(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = [{", ".join([str(_) for _ in _var_values])}]')
+                else:
+                    _var_values = self.visit_wrapper(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = {str(_var_values)}')
+                s_fields.append(var_def)
+
+        # for field in targets:
+        #     _field_ctx = field.ctx
+        #     _field_value_ctx = values.ctx if hasattr(values, 'ctx') else None
+        #     _fields = field.elts if isinstance(field, ast.Tuple) else field
+        #     _field_values = values.elts if isinstance(values, ast.Tuple) else values
+        #
+        #     if isinstance(_fields, list):
+        #         if isinstance(_field_values, list) and len(_fields) == len(_field_values):
+        #             for _field, _field_value in zip(_fields, _field_values):
+        #                 s_field = self.visit_field(_field, _field_value)
+        #                 s_fields.append(s_field)
+        #         else:
+        #             for _field in _fields:
+        #                 s_fields.append(self.visit_field(_field, _field_values))
+        #     else:
+        #         s_field = self.visit_field(_fields, _field_values)
+        #         s_fields.append(s_field)
         return s_fields if len(s_fields) > 1 else s_fields[0]
 
     def visit_AugAssign(self, node: AugAssign) -> Any:
-        return super().visit_AugAssign(node)
+        return '+='
 
     def visit_AnnAssign(self, node: AnnAssign) -> Any:
         return super().visit_AnnAssign(node)
@@ -239,11 +291,15 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_AsyncWith(node)
 
     def visit_Raise(self, node: Raise) -> Any:
+        _expr = 'raise'
         cause_expr = self.visit_wrapper(node.cause) if node.cause else None
-        exc_expr = self.visit_wrapper(node.exc)
+        exc_expr = self.visit_wrapper(node.exc) if node.exc else None
         if cause_expr is not None:
             pass
-        return f'raise {exc_expr}'
+        if exc_expr is not None:
+            _expr = _expr + ' ' + str(exc_expr)
+
+        return _expr
 
     def visit_Try(self, node: Try) -> Any:
         """
@@ -346,10 +402,21 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_Break(node)
 
     def visit_Continue(self, node: Continue) -> Any:
-        return super().visit_Continue(node)
+        return 'continue'
 
     def visit_Slice(self, node: Slice) -> Any:
-        return super().visit_Slice(node)
+        _lower = None if node.lower is None else self.visit_wrapper(node.lower)
+        _upper = None if node.upper is None else self.visit_wrapper(node.upper)
+        _step = None if node.step is None else self.visit_wrapper(node.step)
+        _expr = ''
+        if _lower:
+            _expr = f'{_lower}'
+        _expr = f'{_expr}:'
+        if _upper:
+            _expr = f'{_expr}{_upper}'
+        if _step:
+            _expr = f'{_expr}:{_step}'
+        return _expr
 
     def visit_BoolOp(self, node: BoolOp) -> Any:
         op_expr = self.visit_wrapper(node.op)
@@ -357,10 +424,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         expr = ''
         for value_expr in value_exprs:
             if isinstance(value_expr, list):
-                expr = f'{expr} or {str(value_expr)}'
+                expr = f'{expr} {op_expr} {str(value_expr)}'
             else:
-                expr = f'{expr} or {value_expr}'
-        return expr[2:]
+                expr = f'{expr} {op_expr} {value_expr}'
+        return expr[len(op_expr) + 2:]
 
     def visit_BinOp(self, node: BinOp) -> Any:
         """
@@ -372,7 +439,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         left_expr = self.visit_wrapper(node.left)
         op_expr = self.visit_wrapper(node.op)
         right_expr = self.visit_wrapper(node.right)
-        expr = f'{left_expr.expr} {op_expr} {right_expr if isinstance(right_expr, str) else right_expr.expr}'
+        expr = f'{left_expr} {op_expr} {str(right_expr)}'
         print(expr)
         return expr
 
@@ -420,19 +487,80 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             value.add(self.visit_wrapper(elt))
         return value
 
+    def visit_comp(self, node):
+        if hasattr(node, 'elt'):
+            _elt = self.visit_wrapper(node.elt)
+            _expr = ''
+            if isinstance(node.elt, ast.Tuple):
+                _expr = f'({", ".join([str(_) for _ in _elt])})'
+            else:
+                _expr = f'({_elt})'
+                pass
+            for _generator in node.generators:
+                _generator_value = self.visit_comprehension(_generator)
+                _expr = f'{_expr} {_generator_value}'
+            print(_expr)
+        else:
+            _key = self.visit_Name(node.key)
+            _value = self.visit_wrapper(node.value)
+            _expr = '{'
+            _expr = f'{_expr}{_key}: {_value}'
+            for _generator in node.generators:
+                _generator_value = self.visit_comprehension(_generator)
+                _expr = f'{_expr} {_generator_value}'
+            _expr = _expr + '}'
+            print(_expr)
+        return _expr
+
     def visit_ListComp(self, node: ListComp) -> Any:
         body_expr = self.visit_wrapper(node.elt)
         generator_expr = [self.visit_wrapper(item) for item in node.generators]
         return f'[{body_expr} {" ".join(generator_expr)}]'
 
     def visit_SetComp(self, node: SetComp) -> Any:
-        return super().visit_SetComp(node)
+        return self.visit_comp(node)
 
     def visit_DictComp(self, node: DictComp) -> Any:
-        return super().visit_DictComp(node)
+        if hasattr(node, 'elt'):
+            _elt = self.visit_wrapper(node.elt)
+            _expr = ''
+            if isinstance(node.elt, ast.Tuple):
+                _expr = f'({", ".join([str(_) for _ in _elt])})'
+            else:
+                pass
+
+            for _generator in node.generators:
+                _generator_value = self.visit_comprehension(_generator)
+                _expr = f'{_expr} {_generator_value}'
+            print(_expr)
+        else:
+            _key = self.visit_Name(node.key)
+            _value = self.visit_wrapper(node.value)
+            _expr = '{'
+            _expr = f'{_expr}{_key}: {_value}'
+            for _generator in node.generators:
+                _generator_value = self.visit_comprehension(_generator)
+                _expr = f'{_expr} {_generator_value}'
+            _expr = _expr + '}'
+            print(_expr)
+        return _expr
 
     def visit_GeneratorExp(self, node: GeneratorExp) -> Any:
-        return super().visit_GeneratorExp(node)
+        if hasattr(node, 'elt'):
+            _elt = self.visit_wrapper(node.elt)
+            _expr = ''
+            if isinstance(node.elt, ast.Tuple):
+                _expr = f'({", ".join([str(_) for _ in _elt])})'
+            else:
+                pass
+
+            for _generator in node.generators:
+                _generator_value = self.visit_comprehension(_generator)
+                _expr = f'{_expr} {_generator_value}'
+            print(_expr)
+        else:
+            print()
+        return _expr
 
     def visit_Await(self, node: Await) -> Any:
         return super().visit_Await(node)
@@ -524,7 +652,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             if isinstance(item, ast.Constant):
                 value_exprs = f'{value_exprs}{self.visit_wrapper(item).expr}'
             elif isinstance(item, ast.FormattedValue):
-                value_exprs = f'{value_exprs}{{self.visit_wrapper(item).expr}}'
+                value_exprs = value_exprs + '{' + self.visit_wrapper(item).expr + '}'
             else:
                 print(item)
         return value_exprs
@@ -543,29 +671,9 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_NamedExpr(node)
 
     def visit_Attribute(self, node: Attribute) -> Any:
-        if isinstance(node.value, ast.Name):
-            var_access = self.visit_wrapper(node.value)
-            var_access.set_label(node.attr)
-            var_access.set_expr(f'{var_access.get_expr()}.{node.attr}')
-        elif isinstance(node.value, ast.Attribute):
-            var_access = self.visit_Attribute(node.value)
-            var_access.set_label(f'{var_access.get_label()}.{node.attr}')
-            var_access.set_expr(f'{var_access.get_var()}.{var_access.get_label()}')
-        elif isinstance(node.value, ast.Subscript):
-            var_access = self.visit_Subscript(node.value)
-            var_access.set_label(f'{var_access.get_label()}.{node.attr}')
-            var_access.set_expr(f'{var_access.get_var()}{var_access.get_label()}')
-            print()
-        else:
-            var_access = VarAccess(node)
-            var_access.set_label(node.attr)
-            var_expr = self.visit_wrapper(node.value)
-            var_access.set_var(var_expr)
-
-            print()
-
-        attr = node.attr
-        value = self.visit_wrapper(node.value) if node.value else None
+        var_access = VarAccess(node)
+        var_access.set_label(node.attr)
+        var_access.set_var(self.visit_wrapper(node.value))
         return var_access
 
     def visit_Subscript(self, node: Subscript) -> Any:
@@ -574,10 +682,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         :param node:
         :return:
         """
-        var_access = self.visit_wrapper(node.value)
-        slice_model = self.visit_wrapper(node.slice)
-        var_access.set_label(f'{var_access.get_label()}[{slice_model.expr}]')
-        var_access.set_expr(f'{var_access.get_var()}{var_access.get_label()}')
+        var_access = VarAccess(node)
+        var_access.set_var(self.visit_wrapper(node.value))
+        slice_model = f'{self.visit_wrapper(node.slice)}'
+        var_access.set_label(slice_model)
         # if isinstance(node.value, ast.Name):
         #     var_access = self.visit_Name(node.value)
         #     slice_model = self.visit_wrapper(node.slice)
@@ -597,6 +705,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         # else:
         #     value_expr = self.visit_wrapper(node.value)
         #     slice_expr = self.visit_wrapper(node.slice)
+        print(var_access)
         return var_access
 
     def visit_Starred(self, node: Starred) -> Any:
@@ -609,16 +718,15 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return var_access
 
     def visit_List(self, node: List) -> Any:
-        list_values = [self.visit_wrapper(item) for item in node.elts]
-        return list_values if list_values else []
+        return [self.visit_wrapper(item) for item in node.elts]
 
     def visit_Tuple(self, node: Tuple) -> Any:
-        elts = [self.visit_wrapper(item) for item in node.elts]
-        tuple_expr = "("
-        for elt in elts:
-            tuple_expr = f'{tuple_expr}{elt.expr}, '
-        tuple_expr = f'{tuple_expr[:-2]})'
-        return tuple_expr
+        # elts =
+        # tuple_expr = "("
+        # for elt in elts:
+        #     tuple_expr = f'{tuple_expr}{elt.expr}, '
+        # tuple_expr = f'{tuple_expr[:-2]})'
+        return tuple([self.visit_wrapper(item) for item in node.elts])
 
     def visit_Del(self, node: Del) -> Any:
         return super().visit_Del(node)
@@ -651,7 +759,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return '/'
 
     def visit_FloorDiv(self, node: FloorDiv) -> Any:
-        return super().visit_FloorDiv(node)
+        return '//'
 
     def visit_LShift(self, node: LShift) -> Any:
         return super().visit_LShift(node)
@@ -710,10 +818,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return 'is not'
 
     def visit_Lt(self, node: Lt) -> Any:
-        return super().visit_Lt(node)
+        return '<'
 
     def visit_LtE(self, node: LtE) -> Any:
-        return super().visit_LtE(node)
+        return '<='
 
     def visit_NotEq(self, node: NotEq) -> Any:
         return '!='
@@ -728,7 +836,14 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         is_async = node.is_async
         if len(if_expr) > 0:
             print(if_expr)
-        return f'async for {target_expr} in {iter_expr}' if is_async else f'for {target_expr} in {iter_expr}'
+
+        if isinstance(node.target, ast.Tuple):
+            _targets = self.visit_Tuple(node.target)
+            _target_expr = f'{", ".join([str(_) for _ in _targets])}'
+        else:
+            _target_expr = target_expr
+
+        return f'async for {_target_expr} in {iter_expr}' if is_async else f'for {_target_expr} in {iter_expr}'
 
     def visit_ExceptHandler(self, node: ExceptHandler) -> Any:
         """
@@ -742,7 +857,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         body_expr = list()
         for item in node.body:
             _ = self.visit_wrapper(item)
-            body_expr.append(_.expr)
+            body_expr.append(str(_))
             pass
         body_expr = '\n\t'.join(body_expr)
         expr = f'except {err_type}'
@@ -795,8 +910,8 @@ class SecurityNodeVisitor(ast.NodeVisitor):
 
     def visit_withitem(self, node: withitem) -> Any:
         context_expr = self.visit_wrapper(node.context_expr)
-        vars_expr = self.visit_wrapper(node.optional_vars)
-        return f'{context_expr} as {vars_expr}'
+        vars_expr = self.visit_wrapper(node.optional_vars) if node.optional_vars is not None else None
+        return f'{context_expr} as {vars_expr}' if vars_expr is not None else context_expr
 
     def visit_ExtSlice(self, node: ExtSlice) -> Any:
         return super().visit_ExtSlice(node)

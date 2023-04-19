@@ -6,3 +6,6 @@ class SModule(object):
         self.fields = dict()
         self.func_access = dict()
         self.expr = dict()
+
+    def __str__(self) -> str:
+        return ''

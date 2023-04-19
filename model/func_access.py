@@ -22,6 +22,14 @@ class FuncAccess(AstModel):
         self.expr = str()
         # self.parent = SFuncDef()
 
+    def __str__(self) -> str:
+        _expr = str(self.var_access)
+        _expr = _expr + '('
+        if len(self.args) > 0:
+            _expr = _expr + ', '.join([str(_) for _ in self.args])
+        _expr = _expr + ')'
+        return _expr
+
     def set_node(self, node: ast.Call):
         self.node = node
 

@@ -2,12 +2,16 @@ from model import AstModel
 
 
 class VarDef(AstModel):
-    expr = str()
-    name = str()
-    label = str()
+    expr = None
+    name = None
+    label = None
+    value = None
 
-    def __init__(self, start_line=-1, end_line=-1, start_col=-1, end_col=-1):
-        super().__init__(start_line, end_line, start_col, end_col)
+    def __init__(self, ast_node):
+        super().__init__(ast_node)
+
+    def __str__(self) -> str:
+        return self.expr
 
     def set_name(self, name):
         self.name = name
@@ -17,3 +21,6 @@ class VarDef(AstModel):
 
     def set_expr(self, expr):
         self.expr = expr
+
+    def set_value(self, value):
+        self.value = value

@@ -16,6 +16,9 @@ class SClassDef(AstModel):
         self.var_def = list()
         self.class_func_access = dict()
 
+    def __str__(self) -> str:
+        return 'class_def'
+
     def add_base(self, base):
         self.bases.append(base)
 

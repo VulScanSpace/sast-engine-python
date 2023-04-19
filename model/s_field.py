@@ -11,3 +11,6 @@ class SField:
         self.expr = ''
         self.name = ''
         self.value_pattern = dict()
+
+    def __str__(self) -> str:
+        return self.expr

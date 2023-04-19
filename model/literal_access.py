@@ -9,6 +9,9 @@ class LiteralAccess(AstModel):
     def __init__(self, ast_node):
         super().__init__(ast_node)
 
+    def __str__(self) -> str:
+        return str(self.expr)
+
     def set_expr(self, expr):
         self.expr = expr
 
