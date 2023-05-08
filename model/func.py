@@ -1,17 +1,16 @@
-import ast
-
 from model import AstModel
 
 
 class SFuncDef(AstModel):
-    name = str()
-    annotations = list()
-    args = list()
-    rets = list()
-    body_array = list()
-
     def __init__(self, ast_node):
         super().__init__(ast_node)
+        self.name = ''
+        self.annotations = list()
+        self.args = list()
+        self.rets = list()
+        self.local_vars = list()
+        self.func_accesses = list()
+        self.body_array = list()
 
     def __str__(self) -> str:
         return self.name
@@ -25,11 +24,17 @@ class SFuncDef(AstModel):
     def add_annotation(self, annotation):
         self.annotations.append(annotation)
 
-    def add_args(self, arg):
-        self.args.append(arg)
+    def set_args(self, args):
+        self.args = args
 
     def add_ret(self, ret):
         self.rets.append(ret)
 
     def add_body(self, body):
         self.body_array.append(body)
+
+    def add_local_var(self, _local_var):
+        self.local_vars.append(_local_var)
+
+    def add_func_access(self, _func_access):
+        self.func_accesses.append(_func_access)

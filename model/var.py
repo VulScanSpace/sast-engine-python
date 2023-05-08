@@ -2,13 +2,17 @@ from model import AstModel
 
 
 class VarDef(AstModel):
-    expr = None
-    name = None
-    label = None
-    value = None
-
     def __init__(self, ast_node):
         super().__init__(ast_node)
+        self.expr = ''
+        self.name = ''
+        self.label = None
+        self.value = None
+        self.annotation = list()
+        self.type_comment = None
+        self.instance = False
+        self.default_value = None
+        self.values = list()
 
     def __str__(self) -> str:
         return self.expr

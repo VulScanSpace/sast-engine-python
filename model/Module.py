@@ -1,9 +1,10 @@
 class SModule(object):
-    def __init__(self):
+    def __init__(self, filename):
+        self.filename = filename
         self.imports = dict()
-        self.classs = dict()
-        self.funcs = dict()
-        self.fields = dict()
+        self.global_class_def = list()
+        self.funcs = list()
+        self.global_fields = dict()
         self.func_access = dict()
         self.expr = dict()
 

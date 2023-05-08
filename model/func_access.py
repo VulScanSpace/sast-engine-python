@@ -20,7 +20,7 @@ class FuncAccess(AstModel):
         self.label = str()
         self.name = str()
         self.expr = str()
-        # self.parent = SFuncDef()
+        self.parent = None
 
     def __str__(self) -> str:
         _expr = str(self.var_access)
@@ -56,3 +56,6 @@ class FuncAccess(AstModel):
 
     def add_args(self, arg):
         self.args.append(arg)
+
+    def set_parent(self, parent):
+        self.parent = parent

@@ -4,7 +4,7 @@ from _ast import withitem, alias, keyword, arg, arguments, ExceptHandler, compre
     BitOr, BitAnd, Add, Or, And, Store, Load, Del, Tuple, List, Name, Starred, Subscript, Attribute, NamedExpr, \
     Constant, JoinedStr, FormattedValue, Call, Compare, YieldFrom, Yield, Await, GeneratorExp, DictComp, SetComp, \
     ListComp, Set, Dict, IfExp, Lambda, UnaryOp, BinOp, BoolOp, Slice, Continue, Break, Pass, Expr, Nonlocal, Global, \
-    ImportFrom, Import, Assert, Try, Raise, AsyncWith, With, If, While, AsyncFor, For, AnnAssign, AugAssign, Assign, \
+    Assert, Try, Raise, AsyncWith, With, If, While, AsyncFor, For, AnnAssign, AugAssign, Assign, \
     Delete, Return, ClassDef, AsyncFunctionDef, FunctionDef, Expression, Interactive, AST
 from ast import NameConstant, Bytes, Str, Num, Param, AugStore, AugLoad, Suite, Index, ExtSlice
 from typing import Any
@@ -14,6 +14,7 @@ from model.Module import SModule
 from model.class_def import SClassDef
 from model.func import SFuncDef
 from model.func_access import FuncAccess
+from model.import_access import ImportAccess
 from model.literal_access import LiteralAccess
 from model.s_field import SField
 from model.var import VarDef
@@ -21,9 +22,13 @@ from model.var_access import VarAccess
 
 
 class SecurityNodeVisitor(ast.NodeVisitor):
-    def __init__(self, _ast):
-        self.s_module = SModule()
+    def __init__(self, filename, _ast):
+        self.s_module = SModule(filename)
         self.visit(_ast)
+
+    @staticmethod
+    def is_import(node):
+        return isinstance(node, (ast.Import, ast.ImportFrom))
 
     def get_module(self):
         return self.s_module
@@ -37,8 +42,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         else:
             return repr(node)
 
-    def visit_wrapper(self, node: AST):
+    def visit_wrapper(self, node):
         name = node.__class__.__name__
+        if self.is_import(node):
+            return self.visit_Import(node)
         method = "visit_" + name
         visitor = getattr(self, method, None)
         if visitor:
@@ -48,12 +55,31 @@ class SecurityNodeVisitor(ast.NodeVisitor):
 
     def visit(self, node: AST) -> Any:
         print(self.str_node(node))
-        for field, value in ast.iter_fields(node):
-            items = value if isinstance(value, list) else list(value)
-
-            for item in items:
-                if isinstance(item, ast.AST):
-                    self.visit_wrapper(item)
+        for body in node.body:
+            if isinstance(body, (ast.Import, ast.ImportFrom)):
+                packages = self.visit_Import(body)
+                for package in packages:
+                    self.s_module.imports[package.alias] = packages
+            elif isinstance(body, ast.Assign):
+                fields = self.visit_Assign(body)
+                # FIXME field 存在多次 assign，以最后一次的值为准
+                for field in fields:
+                    self.s_module.global_fields[field.name.expr] = field
+            elif isinstance(body, ast.ClassDef):
+                class_def = self.visit_ClassDef(body)
+                self.s_module.global_class_def.append(class_def)
+            elif isinstance(body, ast.FunctionDef):
+                func_def = self.visit_FunctionDef(body)
+                self.s_module.funcs.append(func_def)
+            else:
+                print(self.s_module.filename)
+                print(type(body))
+                print()
+            # items = value if isinstance(value, list) else list(value)
+            #
+            # for item in items:
+            #     if isinstance(item, ast.AST):
+            #         self.visit_wrapper(item)
 
     def visit_Module(self, node) -> Any:
         for field, value in ast.iter_fields(node):
@@ -75,15 +101,129 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         for item in node.decorator_list:
             func.add_annotation(self.visit_wrapper(item))
 
-        func.add_args(self.visit_arguments(node.args))
+        func.set_args(self.visit_arguments(node.args))
 
         for item in node.body:
-            func.add_body(self.visit_wrapper(item))
+            if isinstance(item, ast.AsyncFunctionDef):
+                print()
+            elif isinstance(item, ast.FunctionDef):
+                print()
+            elif isinstance(item, ast.ClassDef):
+                _class_def = self.visit_ClassDef(item)
+                func.add_body(_class_def)
+            elif isinstance(item, ast.Return):
+                _ = self.visit_Return(item)
+                func.rets.append(_)
+            elif isinstance(item, ast.Delete):
+                _ = self.visit_Delete(item)
+                func.add_body(_)
+            elif isinstance(item, ast.Assign):
+                var_defs = self.visit_Assign(item)
+                for _var_def in var_defs:
+                    func.add_local_var(_var_def)
+                    func.add_body(_var_def)
+            elif isinstance(item, ast.AugAssign):
+                var_defs = self.visit_AugAssign(item)
+                for _var_def in var_defs:
+                    func.add_local_var(_var_def)
+                    func.add_body(_var_def)
+            elif isinstance(item, ast.AnnAssign):
+                print()
+            elif isinstance(item, ast.For):
+                _ = self.visit_For(item)
+                func.add_body(_)
+            elif isinstance(item, ast.AsyncFor):
+                print()
+            elif isinstance(item, ast.While):
+                print()
+            elif isinstance(item, ast.If):
+                print()
+            elif isinstance(item, ast.With):
+                print()
+            elif isinstance(item, ast.AsyncWith):
+                print()
+            # elif isinstance(item, ast.Match):
+            #     print()
+            elif isinstance(item, ast.Raise):
+                print()
+            elif isinstance(item, ast.Try):
+                print()
+            elif isinstance(item, ast.Assert):
+                print()
+            elif isinstance(item, ast.Import):
+                print()
+            elif isinstance(item, ast.ImportFrom):
+                print()
+            elif isinstance(item, ast.Global):
+                print()
+            elif isinstance(item, ast.Nonlocal):
+                print()
+            elif isinstance(item, ast.Expr):
+                _expr_value = item.value
+                if isinstance(_expr_value, ast.BoolOp):
+                    self.visit_BoolOp(_expr_value)
+                elif isinstance(_expr_value, ast.NamedExpr):
+                    print()
+                elif isinstance(_expr_value, ast.BinOp):
+                    print()
+                elif isinstance(_expr_value, ast.UnaryOp):
+                    print()
+                elif isinstance(_expr_value, ast.Lambda):
+                    print()
+                elif isinstance(_expr_value, ast.IfExp):
+                    print()
+                elif isinstance(_expr_value, ast.Dict):
+                    print()
+                elif isinstance(_expr_value, ast.Set):
+                    print()
+                elif isinstance(_expr_value, ast.ListComp):
+                    print()
+                elif isinstance(_expr_value, ast.SetComp):
+                    print()
+                elif isinstance(_expr_value, ast.DictComp):
+                    print()
+                elif isinstance(_expr_value, ast.GeneratorExp):
+                    print()
+                elif isinstance(_expr_value, ast.Await):
+                    print()
+                elif isinstance(_expr_value, ast.Yield):
+                    print()
+                elif isinstance(_expr_value, ast.YieldFrom):
+                    print()
+                elif isinstance(_expr_value, ast.Compare):
+                    print()
+                elif isinstance(_expr_value, ast.Call):
+                    func_access = self.visit_Call(_expr_value)
+                    func_access.set_parent(func)
+                    func.add_body(func_access)
+                elif isinstance(_expr_value, ast.FormattedValue):
+                    print()
+                elif isinstance(_expr_value, ast.JoinedStr):
+                    print()
+                elif isinstance(_expr_value, ast.Constant):
+                    print()
+                elif isinstance(_expr_value, ast.Attribute):
+                    print()
+                elif isinstance(_expr_value, ast.Subscript):
+                    print()
+                elif isinstance(_expr_value, ast.Starred):
+                    print()
+                elif isinstance(_expr_value, ast.Name):
+                    print()
+                elif isinstance(_expr_value, ast.List):
+                    print()
+                elif isinstance(_expr_value, ast.Tuple):
+                    print()
+                elif isinstance(_expr_value, ast.Slice):
+                    print()
+                else:
+                    print()
+            else:
+                continue
 
         if node.returns is not None:
             print()
 
-        self.s_module.funcs[func.get_name()] = func
         return func
 
     def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> Any:
@@ -111,10 +251,11 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                     class_def.add_func_access(self.visit_Call(item.value))
                 else:
                     self.visit_wrapper(item.value)
-        self.s_module.classs[class_def.get_name()] = class_def
-        pass
+        return class_def
 
     def visit_Return(self, node: Return) -> Any:
+        if node.value is None:
+            return 'return'
         value = self.visit_wrapper(node.value)
         return f'return {value}'
 
@@ -154,7 +295,21 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         type_comment = node.type_comment
 
         if len(targets) > 1:
-            print()
+            var_def = VarDef(node)
+            _var_list = [self.visit_wrapper(_) for _ in targets]
+            for _var_def in _var_list:
+                if isinstance(values, ast.Tuple):
+                    _var_values = self.visit_Tuple(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = ({", ".join([str(_) for _ in _var_values])})')
+                elif isinstance(values, ast.List):
+                    _var_values = self.visit_List(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = [{", ".join([str(_) for _ in _var_values])}]')
+                else:
+                    _var_values = self.visit_wrapper(values)
+                    var_def.set_value(_var_values)
+                    var_def.set_expr(f'{_var_def.expr} = {str(_var_values)}')
         else:
             _var = targets[0]
             if isinstance(_var, ast.Tuple):
@@ -163,7 +318,6 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                         s_field = self.visit_field(_field, _field_value)
                         s_fields.append(s_field)
                 else:
-
                     _var_names = self.visit_Tuple(_var)
                     _var_value = self.visit_wrapper(values)
                     index = 0
@@ -209,7 +363,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         #     else:
         #         s_field = self.visit_field(_fields, _field_values)
         #         s_fields.append(s_field)
-        return s_fields if len(s_fields) > 1 else s_fields[0]
+        return s_fields
 
     def visit_AugAssign(self, node: AugAssign) -> Any:
         return '+='
@@ -218,28 +372,51 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_AnnAssign(node)
 
     def visit_For(self, node: For) -> Any:
-        # target
-        loop_var = self.visit_wrapper(node.target)
+        for_model = model.ForModel(node)
+
+        _ = self.visit_Name(node.target)
+        _var_def = VarDef(node.target)
+        _var_def.set_name(_.get_var())
+        _var_def.set_parent(for_model)
+
+        for_model.local_vars.append(_var_def)
+
         # iter
-        loop_iter = self.visit_wrapper(node.iter)
-        expr = f'for {loop_var} in {loop_iter}:'
+        _var_access = self.visit_wrapper(node.iter)
+        _var_access.set_parent(for_model)
+
+        _var_def.set_value(_var_access)
+
         # body
-        loop_body = [self.visit_wrapper(item) for item in node.body]
-        for body in loop_body:
-            expr = f'{expr}\n\t{body}'
-        # orelse
-        loop_else = [self.visit_wrapper(item) for item in node.orelse]
-        expr = expr if len(loop_else) == 0 else f'{expr}\nelse:'
-        for body in loop_else:
-            expr = f'{expr}\n\t{body}'
-        print(expr)
-        return expr
+        for item in node.body:
+            if isinstance(item, ast.Assign):
+                _local_vars = self.visit_Assign(item)
+                for _ in _local_vars:
+                    _.set_parent(for_model)
+                    for_model.body.append(_)
+            elif isinstance(item, ast.Call) or (isinstance(item, ast.Expr) and isinstance(item.value, ast.Call)):
+                _func_access = self.visit_Call(item if isinstance(item, ast.Call) else item.value)
+                _func_access.set_parent(for_model)
+                for_model.body.append(_func_access)
+                for_model.func_accesses.append(_func_access)
+            else:
+                _ = self.visit_wrapper(item)
+                _.set_parent(for_model)
+                for_model.body.append(_)
+
+        for item in node.orelse:
+            print()
+            loop_else = [self.visit_wrapper(item) for item in node.orelse]
+        return for_model
 
     def visit_AsyncFor(self, node: AsyncFor) -> Any:
         return super().visit_AsyncFor(node)
 
     def visit_While(self, node: While) -> Any:
-        return super().visit_While(node)
+        condition = self.visit_wrapper(node.test)
+        body_items = [self.visit_wrapper(_) for _ in node.body]
+        orelse = [self.visit_wrapper(_) for _ in node.orelse]
+        return condition
 
     def visit_If(self, node: If) -> Any:
         test = node.test
@@ -330,21 +507,24 @@ class SecurityNodeVisitor(ast.NodeVisitor):
     def visit_Assert(self, node: Assert) -> Any:
         return super().visit_Assert(node)
 
-    def visit_Import(self, node: Import) -> Any:
-        for _module in node.names:
-            module_name = _module.name
-            alias_name = _module.asname if _module.asname else module_name
-            self.s_module.imports[alias_name] = module_name
-
-    def visit_ImportFrom(self, node: ImportFrom) -> Any:
-        base_module_name = node.module
-        for _module in node.names:
-            module_name = f'{base_module_name}.{_module.name}' if base_module_name else _module.name
-            alias_name = _module.asname if _module.asname else _module.name
-            self.s_module.imports[alias_name] = module_name
+    def visit_Import(self, node):
+        packages = list()
+        if isinstance(node, ast.Import):
+            for _module in node.names:
+                module_name = _module.name
+                alias_name = _module.asname if _module.asname else module_name
+                packages.append(ImportAccess(None, module_name, alias_name))
+        else:
+            base_module_name = node.module
+            for _module in node.names:
+                module_name = f'{base_module_name}.{_module.name}' if base_module_name else _module.name
+                alias_name = _module.asname if _module.asname else _module.name
+                packages.append(ImportAccess(None, module_name, alias_name))
+        return packages
 
     def visit_Global(self, node: Global) -> Any:
-        return super().visit_Global(node)
+        # 从全局变量中获取 var
+        return [self.s_module.global_fields.get(_) for _ in node.names]
 
     def visit_Nonlocal(self, node: Nonlocal) -> Any:
         return super().visit_Nonlocal(node)
@@ -399,7 +579,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return 'pass'
 
     def visit_Break(self, node: Break) -> Any:
-        return super().visit_Break(node)
+        return 'break'
 
     def visit_Continue(self, node: Continue) -> Any:
         return 'continue'
@@ -534,7 +714,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                 _expr = f'{_expr} {_generator_value}'
             print(_expr)
         else:
-            _key = self.visit_Name(node.key)
+            _key = self.visit_wrapper(node.key)
             _value = self.visit_wrapper(node.value)
             _expr = '{'
             _expr = f'{_expr}{_key}: {_value}'
@@ -566,10 +746,12 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_Await(node)
 
     def visit_Yield(self, node: Yield) -> Any:
-        return super().visit_Yield(node)
+        yield_value = self.visit_Name(node.value)
+        return yield_value
 
     def visit_YieldFrom(self, node: YieldFrom) -> Any:
-        return super().visit_YieldFrom(node)
+        yield_value = self.visit_Name(node.value)
+        return yield_value
 
     def visit_Compare(self, node: Compare) -> Any:
         left = node.left
@@ -709,7 +891,12 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return var_access
 
     def visit_Starred(self, node: Starred) -> Any:
-        return super().visit_Starred(node)
+        _var = self.visit_wrapper(node.value)
+        # TODO field access
+        var_access = VarAccess(node)
+        var_access.set_var(self.s_module.global_fields.get(_var.expr))
+        var_access.set_args()
+        return var_access
 
     def visit_Name(self, node: Name) -> Any:
         var_access = VarAccess(node)
@@ -747,10 +934,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return '+'
 
     def visit_BitAnd(self, node: BitAnd) -> Any:
-        return super().visit_BitAnd(node)
+        return '&'
 
     def visit_BitOr(self, node: BitOr) -> Any:
-        return super().visit_BitOr(node)
+        return '|'
 
     def visit_BitXor(self, node: BitXor) -> Any:
         return super().visit_BitXor(node)
@@ -797,7 +984,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         return super().visit_UAdd(node)
 
     def visit_USub(self, node: USub) -> Any:
-        return super().visit_USub(node)
+        return '-'
 
     def visit_Eq(self, node: Eq) -> Any:
         return '=='
@@ -870,27 +1057,31 @@ class SecurityNodeVisitor(ast.NodeVisitor):
 
     def visit_arguments(self, node: arguments) -> Any:
         arguments = list()
+        for arg in node.args:
+            pass
+
         if isinstance(node.args, list) and isinstance(node.defaults, list):
             if len(node.defaults) > 0 and len(node.args) == len(node.defaults):
-                for arg_name, default_value in zip(node.args, node.defaults):
-                    arguments.append(f'{self.visit_wrapper(arg_name)}={self.visit_wrapper(default_value)}')
+                for _arg, default_value in zip(node.args, node.defaults):
+                    var_def = self.visit_arg(_arg)
+                    var_def.default_value = self.visit_wrapper(default_value)
+                    arguments.append(var_def)
             else:
-                for arg in node.args:
-                    arguments.append(f'{self.visit_wrapper(arg)}')
+                for _arg in node.args:
+                    arguments.append(self.visit_arg(_arg))
         else:
             pass
-        return ', '.join(arguments)
+        return arguments
 
     def visit_arg(self, node: arg) -> Any:
-        arg = node.arg
+        arg_name = node.arg
         annotation = node.annotation
-        type_comment = node.type_comment
-        expr = ''
-        if annotation:
-            expr = f'{annotation}'
-        expr = f'{expr} {arg}' if expr else arg
-        expr = f'{expr}:{type_comment}' if type_comment else expr
-        return expr
+        var = VarDef(node)
+        var.set_name(arg_name)
+        var.annotation = annotation
+        if arg_name == 'self':
+            var.instance = True
+        return var
 
     def visit_keyword(self, node: keyword) -> Any:
         """
@@ -950,12 +1141,5 @@ class SecurityNodeVisitor(ast.NodeVisitor):
     def parse_module(filename: str):
         with open(filename) as f:
             fdata = f.read()
-            module = SecurityNodeVisitor(ast.parse(fdata)).get_module()
+            module = SecurityNodeVisitor(filename, ast.parse(fdata)).get_module()
             return module
-
-#
-# if __name__ == "__main__":
-#     filename = '/Users/owefsad/PycharmProjects/bandit/bandit/cli/main.py'
-#     filename = '/Users/owefsad/PycharmProjects/tk-example/main.py'
-#     filename = '/Users/owefsad/PycharmProjects/bandit/bandit/core/blacklisting.py'
-#     filename = '/Users/owefsad/PycharmProjects/sast-engine-python/test/examples/eval.py'
