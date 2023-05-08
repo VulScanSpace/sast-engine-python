@@ -24,7 +24,7 @@ from model.var_access import VarAccess
 class SecurityNodeVisitor(ast.NodeVisitor):
     def __init__(self, filename, _ast):
         self.s_module = SModule(filename)
-        self.visit(_ast)
+        self.visit_Module(_ast)
 
     @staticmethod
     def is_import(node):
@@ -75,18 +75,36 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                 print(self.s_module.filename)
                 print(type(body))
                 print()
-            # items = value if isinstance(value, list) else list(value)
-            #
-            # for item in items:
-            #     if isinstance(item, ast.AST):
-            #         self.visit_wrapper(item)
 
     def visit_Module(self, node) -> Any:
-        for field, value in ast.iter_fields(node):
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        self.visit(item)
+        for item in node.body:
+            if isinstance(item, (ast.Import, ast.ImportFrom)):
+                packages = self.visit_Import(item)
+                for package in packages:
+                    self.s_module.imports[package.alias] = packages
+            elif isinstance(item, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                fields = list()
+                if isinstance(item, ast.Assign):
+                    fields = self.visit_Assign(item)
+                elif isinstance(item, ast.AugAssign):
+                    fields = self.visit_AugAssign(item)
+                elif isinstance(item, ast.AnnAssign):
+                    fields = self.visit_AnnAssign(item)
+
+                # FIXME field 存在多次 assign，以最后一次的值为准
+                for field in fields:
+                    # 如果存在，则复制，如果不存在，则保存
+                    self.s_module.global_fields[field.name.expr] = field
+            elif isinstance(item, ast.ClassDef):
+                class_def = self.visit_ClassDef(item)
+                self.s_module.global_class_def.append(class_def)
+            elif isinstance(item, ast.FunctionDef):
+                func_def = self.visit_FunctionDef(item)
+                self.s_module.funcs.append(func_def)
+            else:
+                print(self.s_module.filename)
+                print(type(item))
+                print()
 
     def visit_Interactive(self, node: Interactive) -> Any:
         return super().visit_Interactive(node)
@@ -139,7 +157,9 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             elif isinstance(item, ast.If):
                 print()
             elif isinstance(item, ast.With):
-                print()
+                _with = self.visit_With(item)
+                _with.set_parent(func)
+                func.add_body(_with)
             elif isinstance(item, ast.AsyncWith):
                 print()
             # elif isinstance(item, ast.Match):
@@ -147,7 +167,9 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             elif isinstance(item, ast.Raise):
                 print()
             elif isinstance(item, ast.Try):
-                print()
+                try_expr = self.visit_Try(item)
+                try_expr.set_parent(func)
+                func.add_body(try_expr)
             elif isinstance(item, ast.Assert):
                 print()
             elif isinstance(item, ast.Import):
@@ -201,7 +223,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                 elif isinstance(_expr_value, ast.JoinedStr):
                     print()
                 elif isinstance(_expr_value, ast.Constant):
-                    print()
+                    continue
                 elif isinstance(_expr_value, ast.Attribute):
                     print()
                 elif isinstance(_expr_value, ast.Subscript):
@@ -345,28 +367,14 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                     var_def.set_value(_var_values)
                     var_def.set_expr(f'{_var_def.expr} = {str(_var_values)}')
                 s_fields.append(var_def)
-
-        # for field in targets:
-        #     _field_ctx = field.ctx
-        #     _field_value_ctx = values.ctx if hasattr(values, 'ctx') else None
-        #     _fields = field.elts if isinstance(field, ast.Tuple) else field
-        #     _field_values = values.elts if isinstance(values, ast.Tuple) else values
-        #
-        #     if isinstance(_fields, list):
-        #         if isinstance(_field_values, list) and len(_fields) == len(_field_values):
-        #             for _field, _field_value in zip(_fields, _field_values):
-        #                 s_field = self.visit_field(_field, _field_value)
-        #                 s_fields.append(s_field)
-        #         else:
-        #             for _field in _fields:
-        #                 s_fields.append(self.visit_field(_field, _field_values))
-        #     else:
-        #         s_field = self.visit_field(_fields, _field_values)
-        #         s_fields.append(s_field)
         return s_fields
 
     def visit_AugAssign(self, node: AugAssign) -> Any:
-        return '+='
+        var_def = self.visit_Name(node.target)
+        value = self.visit_Expr(node.value)
+        var_def.add_value(value)
+        var_def.set_value(value + var_def.get_value())
+        return var_def
 
     def visit_AnnAssign(self, node: AnnAssign) -> Any:
         return super().visit_AnnAssign(node)
@@ -382,10 +390,14 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         for_model.local_vars.append(_var_def)
 
         # iter
-        _var_access = self.visit_wrapper(node.iter)
-        _var_access.set_parent(for_model)
+        _var_accesses = self.visit_wrapper(node.iter)
+        if isinstance(_var_accesses, list):
+            for _var_access in _var_accesses:
+                _var_access.set_parent(for_model)
+        else:
+            _var_accesses.set_parent(for_model)
 
-        _var_def.set_value(_var_access)
+        _var_def.set_value(_var_accesses)
 
         # body
         for item in node.body:
@@ -449,6 +461,14 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         :param node:
         :return:
         """
+        ast_with = model.AstWith(node)
+        for item in node.items:
+            _item = self.visit_withitem(item)
+            ast_with.add_var_def(_item)
+
+        for item in node.body:
+            _body = self.visit_wrapper(item)
+            ast_with.add_body(_body)
         with_item_expr = [self.visit_wrapper(item) for item in node.items]
         body_expr = [self.visit_wrapper(item) for item in node.body]
         expr = 'with'
@@ -462,7 +482,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             else:
                 expr = f'{expr}\n\t{item}'
         print(expr)
-        return expr
+        return ast_with
 
     def visit_AsyncWith(self, node: AsyncWith) -> Any:
         return super().visit_AsyncWith(node)
@@ -485,6 +505,23 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         :param node:
         :return:
         """
+        ast_try = model.AstTry(node)
+        for item in node.body:
+            body = self.visit_wrapper(item)
+            ast_try.add_body(body)
+
+        for item in node.handlers:
+            body = self.visit_wrapper(item)
+            ast_try.add_except_body(body)
+
+        for item in node.orelse:
+            body = self.visit_wrapper(item)
+            ast_try.add_else_body(body)
+
+        for item in node.finalbody:
+            body = self.visit_wrapper(item)
+            ast_try.add_final_body(body)
+
         body_expr = [self.visit_wrapper(item) for item in node.body]
         handler_expr = [self.visit_wrapper(item) for item in node.handlers]
         orelse_expr = [self.visit_wrapper(item) for item in node.orelse]
@@ -502,7 +539,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         for item in finalbody_expr:
             expr = f'{expr}\n{item}'
         print(expr)
-        return expr
+        return ast_try
 
     def visit_Assert(self, node: Assert) -> Any:
         return super().visit_Assert(node)
@@ -828,16 +865,10 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         :param node:
         :return:
         """
-        value_exprs = ''
-
+        _str = model.AstStr(node)
         for item in node.values:
-            if isinstance(item, ast.Constant):
-                value_exprs = f'{value_exprs}{self.visit_wrapper(item).expr}'
-            elif isinstance(item, ast.FormattedValue):
-                value_exprs = value_exprs + '{' + self.visit_wrapper(item).expr + '}'
-            else:
-                print(item)
-        return value_exprs
+            _str.add_value(self.visit_wrapper(item))
+        return _str
 
     def visit_Constant(self, node: Constant) -> Any:
         literal = LiteralAccess(node)
@@ -1102,7 +1133,11 @@ class SecurityNodeVisitor(ast.NodeVisitor):
     def visit_withitem(self, node: withitem) -> Any:
         context_expr = self.visit_wrapper(node.context_expr)
         vars_expr = self.visit_wrapper(node.optional_vars) if node.optional_vars is not None else None
-        return f'{context_expr} as {vars_expr}' if vars_expr is not None else context_expr
+        if vars_expr is not None:
+            vars_expr.add_value(context_expr)
+        else:
+            return None
+        return vars_expr
 
     def visit_ExtSlice(self, node: ExtSlice) -> Any:
         return super().visit_ExtSlice(node)

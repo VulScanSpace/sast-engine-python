@@ -16,9 +16,11 @@ class Engine(object):
                 '/').removesuffix('/')
             module_name = module_path.replace('/', '.')
             module = SecurityNodeVisitor.parse_module(source_file)
+            self.modules[module_name] = module
             print(module_name, module_path, source_file, module)
 
 
 if __name__ == '__main__':
     engine = Engine("/Users/owefsad/PycharmProjects/bandit")
     engine.run()
+    print(engine.modules)

@@ -4,13 +4,12 @@ from model import AstModel
 
 
 class VarAccess(AstModel):
-    expr = str()
-    var = str()
-    label = str()
-    args = False
-
     def __init__(self, ast_node):
         super().__init__(ast_node)
+        self.var = None
+        self.label = None
+        self.expr = None
+        self.values = dict()
 
     def __str__(self) -> str:
         if isinstance(self.ast_node, ast.Subscript):
@@ -43,3 +42,6 @@ class VarAccess(AstModel):
 
     def set_args(self):
         self.args = True
+
+    def add_value(self, value):
+        self.values[str(value)] = value

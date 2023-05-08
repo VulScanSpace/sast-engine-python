@@ -12,7 +12,7 @@ class VarDef(AstModel):
         self.type_comment = None
         self.instance = False
         self.default_value = None
-        self.values = list()
+        self.values = dict()
 
     def __str__(self) -> str:
         return self.expr
@@ -28,3 +28,9 @@ class VarDef(AstModel):
 
     def set_value(self, value):
         self.value = value
+
+    def get_value(self):
+        return self.value
+
+    def add_value(self, value):
+        self.values[str(value)] = value
