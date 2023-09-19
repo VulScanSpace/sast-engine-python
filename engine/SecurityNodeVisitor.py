@@ -57,9 +57,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
         print(self.str_node(node))
         for body in node.body:
             if isinstance(body, (ast.Import, ast.ImportFrom)):
-                packages = self.visit_Import(body)
-                for package in packages:
-                    self.s_module.imports[package.alias] = packages
+                self.visit_Import(body)
             elif isinstance(body, ast.Assign):
                 fields = self.visit_Assign(body)
                 # FIXME field 存在多次 assign，以最后一次的值为准
@@ -79,9 +77,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
     def visit_Module(self, node) -> Any:
         for item in node.body:
             if isinstance(item, (ast.Import, ast.ImportFrom)):
-                packages = self.visit_Import(item)
-                for package in packages:
-                    self.s_module.imports[package.alias] = packages
+                self.visit_Import(item)
             elif isinstance(item, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 fields = list()
                 if isinstance(item, ast.Assign):
@@ -155,6 +151,11 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             elif isinstance(item, ast.While):
                 print()
             elif isinstance(item, ast.If):
+                _condition = self.visit_wrapper(item.test)
+                for _body in item.body:
+                    _body_exp = self.visit_wrapper(_body)
+                for _item in item.orelse:
+                    _or_else = self.visit_wrapper(_item)
                 print()
             elif isinstance(item, ast.With):
                 _with = self.visit_With(item)
@@ -381,23 +382,38 @@ class SecurityNodeVisitor(ast.NodeVisitor):
 
     def visit_For(self, node: For) -> Any:
         for_model = model.ForModel(node)
+        if isinstance(node.target, ast.Name):
+            _ = self.visit_Name(node.target)
+            _var_def = VarDef(node.target)
+            _var_def.set_name(_.get_var())
+            _var_def.set_parent(for_model)
 
-        _ = self.visit_Name(node.target)
-        _var_def = VarDef(node.target)
-        _var_def.set_name(_.get_var())
-        _var_def.set_parent(for_model)
+            for_model.local_vars.append(_var_def)
+        elif isinstance(node.target, ast.Tuple):
+            _vars = list()
+            for _item in node.target.elts:
+                _ = self.visit_Name(_item)
+                _var_def = VarDef(node.target)
+                _var_def.set_name(_.get_var())
+                _var_def.set_parent(for_model)
 
-        for_model.local_vars.append(_var_def)
+                for_model.local_vars.append(_var_def)
+        else:
+            print('notify owefsad for handler.')
 
         # iter
         _var_accesses = self.visit_wrapper(node.iter)
+
         if isinstance(_var_accesses, list):
             for _var_access in _var_accesses:
                 _var_access.set_parent(for_model)
         else:
             _var_accesses.set_parent(for_model)
+            if isinstance(_var_accesses, FuncAccess):
+                for_model.func_accesses.append(_var_accesses)
 
-        _var_def.set_value(_var_accesses)
+        for _var_def in for_model.local_vars:
+            _var_def.set_value(_var_accesses)
 
         # body
         for item in node.body:
@@ -557,6 +573,8 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                 module_name = f'{base_module_name}.{_module.name}' if base_module_name else _module.name
                 alias_name = _module.asname if _module.asname else _module.name
                 packages.append(ImportAccess(None, module_name, alias_name))
+        for package in packages:
+            self.s_module.imports[package.alias] = packages
         return packages
 
     def visit_Global(self, node: Global) -> Any:
@@ -817,7 +835,7 @@ class SecurityNodeVisitor(ast.NodeVisitor):
             func_access.expr = func.id
         elif isinstance(func, ast.Attribute):
             func_access.var_access = self.visit_wrapper(func)
-            func_access.expr = func_access.var_access.get_expr()
+            func_access.expr = str(func_access.var_access)
             func_access.name = func.attr
         else:
             pass

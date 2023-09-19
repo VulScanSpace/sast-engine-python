@@ -22,6 +22,9 @@ class ForModel(AstModel):
         self.body = list()
         self.func_accesses = list()
 
+    def add_local_var(self, _var):
+        self.local_vars.append(_var)
+
 
 class AstTuple(AstModel):
     def __init__(self, ast_node):
